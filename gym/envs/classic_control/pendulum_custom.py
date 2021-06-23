@@ -1,5 +1,8 @@
 """
-For better integrator
+Fix Original Pendulum physics and rendering problem
+- Fix integrator
+- Fix rendering problem (incorrect representation of angle)
+    - Angle at y axis, clockwise as positive
 """
 
 import gym
@@ -52,16 +55,26 @@ class PendulumCustomEnv(gym.Env):
 
         u = np.clip(u, -self.max_torque, self.max_torque)[0]
         self.last_u = u  # for rendering
-        costs = angle_normalize(th) ** 2 + .1 * thdot ** 2 + .001 * (u ** 2)
+        costs = - angle_normalize(th) ** 2 + .1 * thdot ** 2 + .001 * (u ** 2)
 
-        # Forward Euler Integrator
-        newthdot = thdot + (g / l * np.sin(th) + 1. / (2. * m * l ** 2.) * u) * dt
+        # Explicit Euler Integrator
+        # thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)
+        # newthdot = thdot + thdotdot * dt
+        # newth = th + thdot * dt
 
+        # Implicit Euler Integrator
+        thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)
+        newthdot = thdot + thdotdot * dt
         newth = th + newthdot * dt
-        # newthdot = np.clip(newthdot, -self.max_speed, self.max_speed)
+
+        # # Second Order RK2 Integrator
+        # thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)  # Assume u is uniform
+        # k2 = (g / l * np.sin(angle_normalize(th) + .5 * thdotdot * dt) + 1. / (2. * m * l ** 2.) * u)
+        # newthdot = thdot + k2 * dt
+        # newth = th + newthdot * dt
 
         self.state = np.array([newth, newthdot])
-        return self._get_obs(), -costs, False, {}
+        return self._get_obs(), costs, False, {'theta': newth, 'theta_dot': newthdot, 'theta_dotdot': thdotdot}
 
     def reset(self, state):
         # Modified for custom init
@@ -72,7 +85,7 @@ class PendulumCustomEnv(gym.Env):
 
     def _get_obs(self):
         theta, thetadot = self.state
-        return np.array([np.cos(theta), np.sin(theta), thetadot])
+        return np.array([np.cos(theta), np.sin(theta)])
 
     def render(self, mode='human'):
         if self.viewer is None:
@@ -93,9 +106,8 @@ class PendulumCustomEnv(gym.Env):
             self.img.add_attr(self.imgtrans)
 
         self.viewer.add_onetime(self.img)
-        # self.pole_transform.set_rotation(self.state[0] + np.pi / 2)
         self.pole_transform.set_rotation(-self.state[0] + np.pi / 2)
-        if self.last_u:
+        if self.last_u is not None:
             self.imgtrans.scale = (-self.last_u / 2, np.abs(self.last_u) / 2)
 
         return self.viewer.render(return_rgb_array=mode == 'rgb_array')
@@ -107,4 +119,4 @@ class PendulumCustomEnv(gym.Env):
 
 
 def angle_normalize(x):
-    return (((x+np.pi) % (2*np.pi)) - np.pi)
+    return ((x + np.pi) % (2 * np.pi)) - np.pi
