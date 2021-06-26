@@ -11,6 +11,8 @@ from gym.utils import seeding
 import numpy as np
 from os import path
 
+from scipy.integrate import solve_ivp
+
 
 class PendulumCustomEnv(gym.Env):
     metadata = {
@@ -53,30 +55,43 @@ class PendulumCustomEnv(gym.Env):
         l = self.l
         dt = self.dt
 
-        u = np.clip(u, -self.max_torque, self.max_torque)[0]
+        # u = np.clip(u, -self.max_torque, self.max_torque)[0]
         self.last_u = u  # for rendering
         costs = - angle_normalize(th) ** 2 + .1 * thdot ** 2 + .001 * (u ** 2)
 
-        # Explicit Euler Integrator
-        # thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)
+        # # Explicit Euler Integrator
+        # thdotdot = (g / l * np.sin(th) + 1. / (2. * m * l ** 2.) * u)
         # newthdot = thdot + thdotdot * dt
-        # newth = th + thdot * dt
+        # newth = angle_normalize(th + thdot * dt)
 
         # Implicit Euler Integrator
-        thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)
+        thdotdot = (g / l * np.sin(th) + 1. / (2. * m * l ** 2.) * u)
         newthdot = thdot + thdotdot * dt
         newth = th + newthdot * dt
 
         # # Second Order RK2 Integrator
-        # thdotdot = (g / l * np.sin(angle_normalize(th)) + 1. / (2. * m * l ** 2.) * u)  # Assume u is uniform
-        # k2 = (g / l * np.sin(angle_normalize(th) + .5 * thdotdot * dt) + 1. / (2. * m * l ** 2.) * u)
+        # thdotdot = (g / l * np.sin(th) + 1. / (2. * m * l ** 2.) * u)  # Assume u is uniform
+        # k2 = (g / l * np.sin(th) + .5 * thdotdot * dt) + 1. / (2. * m * l ** 2.) * u
         # newthdot = thdot + k2 * dt
         # newth = th + newthdot * dt
+
+        # RK4 Integrator with scipy integrate
+        def inverted_pendulum(t, y):
+            th = y[0]
+            v = y[1]
+            return v, g / l * np.sin(th) + 1. / (2. * m * l ** 2.) * u
+
+        t = np.array([0., dt])
+        sol = solve_ivp(fun=inverted_pendulum, t_span=[t[0], t[-1]], y0=self.state, t_eval=t)  # RK4 with stable energy
+
+        thdotdot = inverted_pendulum(None, sol.y)[1][-1]
+        newthdot = sol.y[1][-1]
+        newth = sol.y[0][-1]
 
         self.state = np.array([newth, newthdot])
         return self._get_obs(), costs, False, {'theta': newth, 'theta_dot': newthdot, 'theta_dotdot': thdotdot}
 
-    def reset(self, state):
+    def reset(self, state=np.array([np.pi/2., 0])):
         # Modified for custom init
 
         self.state = state
@@ -85,7 +100,7 @@ class PendulumCustomEnv(gym.Env):
 
     def _get_obs(self):
         theta, thetadot = self.state
-        return np.array([np.cos(theta), np.sin(theta)])
+        return np.array([np.cos(theta), np.sin(theta), thetadot])
 
     def render(self, mode='human'):
         if self.viewer is None:
@@ -108,7 +123,7 @@ class PendulumCustomEnv(gym.Env):
         self.viewer.add_onetime(self.img)
         self.pole_transform.set_rotation(-self.state[0] + np.pi / 2)
         if self.last_u is not None:
-            self.imgtrans.scale = (-self.last_u / 2, np.abs(self.last_u) / 2)
+            self.imgtrans.scale = (self.last_u / 2, np.abs(self.last_u) / 2)
 
         return self.viewer.render(return_rgb_array=mode == 'rgb_array')
 
